@@ -12,7 +12,7 @@ We have 3 primary goals:
 Due to the large scope of the project, we will be consciously cutting back on some Google Doc functionality. Some significant limitations include:
   1. User roles - In our version of the project, each document will have a single owner who can perform document restorations, and (if implemented) accept and reject suggestions. Additionally, the owner will have the ability to resolve and close comments. We may not have the time to implement different user roles, such as Editors and Viewers. Therefore, all users will be able to edit, and comment on a document that they are added to.
   2. Editor GUI - The editor GUI and capabilities may not be as rich as the Google Docs interface due to time constraints. With shared editing and document history as our central goal, we will attempt to make the editor as nice as possible.
-## Collaborators
+### Collaborators
   1. Sandhya Jayaraman
   2. Suhas Goutham
 
