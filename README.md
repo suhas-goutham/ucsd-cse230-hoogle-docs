@@ -36,4 +36,4 @@ The system architecture consists of three components:
 
 The following diagram shows our system architecture:
 
-![System Architecture](CSE230.drawio.png)
+![System Architecture](images/CSE230.drawio.png)
