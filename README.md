@@ -13,6 +13,11 @@ Due to the large scope of the project, we will be consciously cutting back on so
   1. User roles - In our version of the project, each document will have a single owner who can perform document restorations, and (if implemented) accept and reject suggestions. Additionally, the owner will have the ability to resolve and close comments. We may not have the time to implement different user roles, such as Editors and Viewers. Therefore, all users will be able to edit, and comment on a document that they are added to.
   2. Editor GUI - The editor GUI and capabilities may not be as rich as the Google Docs interface due to time constraints. With shared editing and document history as our central goal, we will attempt to make the editor as nice as possible.
 ### Collaborators
-  1. Sandhya Jayaraman
-  2. Suhas Goutham
+  1. Suhas Goutham
+  2. Sandhya Jayaraman
 
+### Updates
+
+### Challenges
+  1. Network: We started our implementation based on the "Implement a chat server on Haskell" wiki. We used this code as a reference to understand network and socket programming in Haskell. We realized that in this implementation, the server and client tasks were clubbed under common methods. In order to be able to create clients with different privileges (such as document owners, and document viewers), we separated the client and server functionalities into separate modules. We plan on using this as the basis of displaying a text editor TUI for each client. Our current task is to define owner privileges for a single client.
+  2. Editor: To design our editor, we used a brick based text editor implementation <insert link>. We plan on keeping the interface fairly simple as our core task is to implement shared editing. We plan on extending this simple editor to add a few more basic functionalities that the editor does not currently support. For example, the text editor currently does not support shifting the cursor to the next line while pressing the right key at the end of a line. Additionally, the document border in the editor adjusts in size as the user types into it. We plan on providing static document page borders which is visually more appealing.
