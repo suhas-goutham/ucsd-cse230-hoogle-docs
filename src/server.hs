@@ -27,7 +27,7 @@ type Msg = String
 rrLoop sock chan = do
   let broadcast msg = writeChan chan msg
   
-  broadcast ("--> new person entered chat")
+  broadcast "--> new person entered chat"
   
   commLine <- dupChan chan
 
@@ -37,13 +37,17 @@ rrLoop sock chan = do
         loop
 
   writer sock broadcast
-
+  killThread reader
 writer sock broadcast = do
                         msg <- recv sock 1024
                         let s = C.unpack msg
                         case s of
-                          "quit" -> close sock
+                          "quit" -> do
+                                      print "TCP client closing"
+                                      threadDelay 100000
+                                      close sock
                           _      -> do
                                       broadcast s
                                       print ("TCP server received: " ++ s)
+                                      threadDelay 100000
                                       writer sock broadcast

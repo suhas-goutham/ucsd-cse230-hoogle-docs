@@ -21,7 +21,8 @@ sendMess sock = do
               s <- getLine
               case s of
                 "quit" -> do
-                            print ("TCP client closing")
+                            sendAll sock $ C.pack s
+                            print "TCP client closing"
                             close sock
                 _ ->  do
                         print ("TCP client sent: " ++ s)
