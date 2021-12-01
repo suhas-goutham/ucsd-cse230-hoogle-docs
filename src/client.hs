@@ -7,24 +7,28 @@ import Network.Socket.ByteString (recv, sendAll)
 
 main :: IO ()
 main = do
-  -- _ <- forkIO $ runTCPEchoServerForever
-  -- threadDelay 1000000 -- wait one second
-  sendMessage  -- "Hello, world! 1"
-  threadDelay 1000000 -- wait one second
-
-sendMessage :: IO ()
-sendMessage = do
-  addrinfos <- getAddrInfo Nothing (Just "127.0.0.1") (Just "4242")
+  addrinfos <- getAddrInfo Nothing (Just "127.0.0.1") (Just "4040")
   let serveraddr = head addrinfos
   sock <- socket (addrFamily serveraddr) Stream defaultProtocol
   connect sock (addrAddress serveraddr)
-  s <- getLine
-  sendAll sock $ C.pack s
+  sendMessage sock
+
+sendMessage sock = do  
+  forkIO (recvMess sock)
+  loop sock
+
+loop sock = do
+              s <- getLine
+              case s of
+                "quit" -> do
+                            print ("TCP client closing")
+                            close sock
+                _ ->  do
+                        print ("TCP client sent: " ++ s)
+                        sendAll sock $ C.pack s
+                        loop sock
+
+recvMess sock = do
   msg <- recv sock 1024
-  -- close sock
-  -- delay thread to avoid client and server from printing at the same time
-  -- threadDelay 1000000
   print ("TCP client received: " ++ C.unpack msg)
-  if s == "quit" then
-      close sock
-    else sendMessage
+  recvMess sock
