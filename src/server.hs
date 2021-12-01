@@ -36,9 +36,9 @@ rrLoop sock chan = do
         sendAll sock (C.pack mes)
         loop
 
-  loop1 sock broadcast
+  writer sock broadcast
 
-loop1 sock broadcast = do
+writer sock broadcast = do
                         msg <- recv sock 1024
                         let s = C.unpack msg
                         case s of
@@ -46,4 +46,4 @@ loop1 sock broadcast = do
                           _      -> do
                                       broadcast s
                                       print ("TCP server received: " ++ s)
-                                      loop1 sock broadcast
+                                      writer sock broadcast
