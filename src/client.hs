@@ -11,13 +11,13 @@ main = do
   let serveraddr = head addrinfos
   sock <- socket (addrFamily serveraddr) Stream defaultProtocol
   connect sock (addrAddress serveraddr)
-  sendMessage sock
+  sendAndRecvMess sock
 
-sendMessage sock = do  
+sendAndRecvMess sock = do  
   forkIO (recvMess sock)
-  loop sock
+  sendMess sock
 
-loop sock = do
+sendMess sock = do
               s <- getLine
               case s of
                 "quit" -> do
@@ -26,7 +26,7 @@ loop sock = do
                 _ ->  do
                         print ("TCP client sent: " ++ s)
                         sendAll sock $ C.pack s
-                        loop sock
+                        sendMess sock
 
 recvMess sock = do
   msg <- recv sock 1024
