@@ -15,25 +15,26 @@ main = do
   bind sock (addrAddress serveraddr)
   listen sock 2
   chan <- newChan
-  runTCPEchoServerForever sock chan
+  runTCPEchoServerForever sock chan 0
 
-runTCPEchoServerForever sock chan = do 
+runTCPEchoServerForever sock chan msgNum = do 
   (conn, _) <- accept sock
-  forkIO (rrLoop conn chan) -- conn and sock are same
-  runTCPEchoServerForever sock chan
+  forkIO (rrLoop conn chan msgNum) -- conn and sock are same
+  runTCPEchoServerForever sock chan $! msgNum + 1
 
-type Msg = String
+-- type Msg = String
+type Msg = (Int, String)
 
-rrLoop sock chan = do
-  let broadcast msg = writeChan chan msg
+rrLoop sock chan msgNum = do
+  let broadcast msg = writeChan chan (msgNum, msg)
   
   broadcast "--> new person entered chat"
   
   commLine <- dupChan chan
 
   reader <- forkIO $ fix $ \loop -> do
-        mes <- readChan commLine
-        sendAll sock (C.pack mes)
+        (nextNum, mes) <- readChan commLine
+        when (msgNum /= nextNum) $ sendAll sock (C.pack mes)
         loop
 
   writer sock broadcast
