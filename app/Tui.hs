@@ -46,6 +46,17 @@ import Control.Lens
 import GHC.Generics (Generic)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
+-- | Brick Imports Start
+
+import qualified Brick.Widgets.Border as Bdr
+import qualified Brick.Widgets.Border.Style as BdrS
+import qualified Data.Text as Tex
+import qualified Brick.Widgets.Center as C
+import qualified Brick.Widgets.Edit as E
+import qualified Brick.Widgets.ProgressBar as P
+
+-- | Brick Imports End
+
 data TuiState =
   TuiState
     { stateCursor :: TextFieldCursor,
@@ -100,14 +111,23 @@ buildInitialState contents = do
   connect sock (addrAddress serveraddr)
   pure TuiState {stateCursor = tfc, _conn = sock}
 
+borderWidth :: Int
+borderWidth = 0
+borderHeight :: Int
+borderHeight = 0
+
 drawTui :: TuiState -> [Widget ResourceName]
-drawTui ts =
-  [ forceAttr "text" $
-    centerLayer $
-    border $
-    padLeftRight 1 $ selectedTextFieldCursorWidget ResourceName (stateCursor ts)
-  , forceAttr "bg" $ fill ' '
-  ]
+drawTui ts = [addBorder "Editor" (C.center $ vLimitPercent 80 $ hLimitPercent 80 (Widget Fixed Fixed $ do
+              ctx <- getContext
+              render $ selectedTextFieldCursorWidget ResourceName (stateCursor ts)))]
+
+  
+  -- [ forceAttr "text" $
+  --   centerLayer $
+  --   border $
+  --   padLeftRight 1 $ selectedTextFieldCursorWidget ResourceName (stateCursor ts)
+  -- , forceAttr "bg" $ fill ' '
+  -- ]
 
 handleTuiEvent :: TuiState -> BrickEvent n e -> EventM n (Next TuiState)
 handleTuiEvent s e =
@@ -158,3 +178,10 @@ handleTuiEvent s e =
             EvKey KEsc [] -> halt s
             _ -> continue s
     _ -> continue s
+
+
+-- | Helper Functions for UI
+
+-- | Adds a rounded border to a widget with the given label
+addBorder :: Tex.Text -> Widget ResourceName -> Widget ResourceName
+addBorder t = withBorderStyle BdrS.unicodeRounded . Bdr.borderWithLabel (txt t)

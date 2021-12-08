@@ -19,7 +19,7 @@ import Cursor.Brick.TextField
 import Cursor.TextField
 import Cursor.Types
 import Data.Maybe
-import Data.Text (Text)
+import Data.Text (Text, isInfixOf, unpack)
 import qualified Data.Text.IO as T
 import Graphics.Vty.Attributes
 import Graphics.Vty.Input.Events
@@ -48,6 +48,17 @@ import Control.Lens
 
 import GHC.Generics (Generic)
 import Control.Monad.IO.Class (MonadIO(liftIO))
+
+-- | Brick Imports Start
+
+import qualified Brick.Widgets.Border as Bdr
+import qualified Brick.Widgets.Border.Style as BdrS
+import qualified Data.Text as Tex
+import qualified Brick.Widgets.Center as C
+import qualified Brick.Widgets.Edit as E
+import qualified Brick.Widgets.ProgressBar as P
+
+-- | Brick Imports End
 
 data TuiState =
   TuiState
@@ -135,8 +146,10 @@ tui = do
                         loop
 
         endState <- customMain initialVty buildVty (Just eventChan) tuiApp initialState
-        let contents' = rebuildTextFieldCursor (stateCursor endState)
-        unless (contents == contents') $ T.writeFile (fromAbsFile path) contents'
+        putStr ( unpack (rebuildTextFieldCursor (stateCursor endState)))
+        -- | Edits on the Viewer side are not committed to the document
+        -- let contents' = rebuildTextFieldCursor (stateCursor endState)
+        -- unless (contents == contents') $ T.writeFile (fromAbsFile path) contents'
 
 recvMess sock = do
     x <- recv sock 1024
@@ -162,13 +175,16 @@ buildInitialState contents sock = do
   pure TuiState {stateCursor = tfc}
 
 drawTui :: TuiState -> [Widget ResourceName]
-drawTui ts =
-  [ forceAttr "text" $
-    centerLayer $
-    border $
-    padLeftRight 1 $ selectedTextFieldCursorWidget ResourceName (stateCursor ts)
-  , forceAttr "bg" $ fill ' '
-  ]
+drawTui ts = [addBorder "Editor" (C.center $ vLimitPercent 80 $ hLimitPercent 80 (Widget Fixed Fixed $ do
+              ctx <- getContext
+              render $ selectedTextFieldCursorWidget ResourceName (stateCursor ts)))]
+
+  -- [ forceAttr "text" $
+  --   centerLayer $
+  --   border $
+  --   padLeftRight 1 $ selectedTextFieldCursorWidget ResourceName (stateCursor ts)
+  -- , forceAttr "bg" $ fill ' '
+  -- ]
 
 mDo s func = do
                 let tfc = stateCursor s
@@ -190,3 +206,9 @@ handleTuiEvent s (AppEvent (ConnectionTick csReceived)) =
                                     S_Quit              -> halt s
 handleTuiEvent s _ = do 
     continue s
+
+-- | Helper Functions for UI
+
+-- | Adds a rounded border to a widget with the given label
+addBorder :: Tex.Text -> Widget ResourceName -> Widget ResourceName
+addBorder t = withBorderStyle BdrS.unicodeRounded . Bdr.borderWithLabel (txt t)
