@@ -5,6 +5,7 @@
 
 import System.Directory
 import Control.Concurrent
+import Brick (txt)
 import Brick.AttrMap
 import Brick.Main
 import Brick.Types
@@ -12,13 +13,38 @@ import Brick.Util
 import Brick.Widgets.Border
 import Brick.Widgets.Center
 import Brick.Widgets.Core
+import Brick.Forms 
+ ( Form
+  , newForm
+  , formState
+  , formFocus
+  , setFieldValid
+  , renderForm
+  , handleFormEvent
+  , invalidFields
+  , allFieldsValid
+  , focusedFormInputAttr
+  , invalidFormInputAttr
+  , checkboxField
+  , radioField
+  , editShowableField
+  , editTextField
+  , editPasswordField
+  , (@@=)
+  )
+import Brick.Focus
+  ( focusGetCurrent
+  , focusRingCursor
+  )
+import Brick.Widgets.List as L
 import Control.Monad
 import Cursor.Brick.TextField
 import Cursor.TextField
 import Cursor.Types
 import Data.Maybe
 import Data.Text (Text)
-import qualified Data.Text.IO as T
+import qualified Data.Text.IO as IO
+import Graphics.Vty
 import Graphics.Vty.Attributes
 import Graphics.Vty.Input.Events
 import Path
@@ -50,8 +76,8 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 
 import qualified Brick.Widgets.Border as Bdr
 import qualified Brick.Widgets.Border.Style as BdrS
-import qualified Data.Text as Tex
-import qualified Brick.Widgets.Center as C
+import qualified Data.Text as T
+import qualified Brick.Widgets.Center as Ctr
 import qualified Brick.Widgets.Edit as E
 import qualified Brick.Widgets.ProgressBar as P
 
@@ -62,9 +88,36 @@ data TuiState =
     { stateCursor :: TextFieldCursor,
       _conn :: Socket
     }
-  -- deriving (Eq, Show)
+  deriving (Eq, Show)
 
 makeLenses ''TuiState
+
+data ResourceName =
+    ResourceName
+  | UsernameField
+  | FilenameField
+  deriving (Show, Eq, Ord)
+
+-- | Login Form with Username and Filename fields
+data LoginForm = 
+  LoginForm {
+    _uname :: T.Text,
+    _fname :: T.Text
+  } deriving (Show)
+makeLenses ''LoginForm
+
+theMap :: AttrMap
+theMap = attrMap defAttr
+  [ (E.editAttr, white `on` black)
+  , (E.editFocusedAttr, black `on` yellow)
+  , (invalidFormInputAttr, white `on` red)
+  , (focusedFormInputAttr, black `on` yellow)
+  ]
+
+data Editor =
+    EnterPage LoginForm
+  -- | FileSelect MenuList
+  | EditorPage TuiState
 
 sendMess :: Socket -> String -> IO (Maybe String)
 sendMess sock s = do
@@ -76,21 +129,48 @@ main = tui
 
 tui :: IO ()
 tui = do
-  args <- getArgs
+  let args = ["abc.txt"]
+  -- args <- getArgs
   case args of
     [] -> die "No argument to choose file to edit."
     (fp:_) -> do
       path <- resolveFile' fp
-      maybeContents <- forgivingAbsence $ T.readFile (fromAbsFile path)
+      maybeContents <- forgivingAbsence $ IO.readFile (fromAbsFile path)
       let contents = fromMaybe "" maybeContents
-      initialState <- buildInitialState contents
-      endState <- defaultMain tuiApp initialState
-      let contents' = rebuildTextFieldCursor (stateCursor endState)
-      unless (contents == contents') $ T.writeFile (fromAbsFile path) contents'
+      -- initialState <- buildInitialState contents
+      let initForm = mkForm (LoginForm {_uname = "", _fname = ""})
+      let buildVty = do
+                      v <- mkVty =<< standardIOConfig
+                      setMode (outputIface v) Mouse True
+                      return v
+      initialVty <- buildVty
+      endForm <- customMain initialVty buildVty Nothing formApp initForm
+      
+      print $ formState endForm
 
-data ResourceName =
-  ResourceName
-  deriving (Show, Eq, Ord)
+
+      -- endState <- defaultMain tuiApp initialState
+      -- let contents' = rebuildTextFieldCursor (stateCursor endState)
+      -- unless (contents == contents') $ IO.writeFile (fromAbsFile path) contents'
+
+
+-- %%%%%%%%%%%%%%%%%%%%%
+-- Actual Editor App
+-- %%%%%%%%%%%%%%%%%%%%%
+
+app s = App{
+  
+}
+
+formApp :: App (Form LoginForm e ResourceName) e ResourceName
+formApp =
+    App { appDraw = drawForm
+        , appHandleEvent = handleLoginEvent
+        , appChooseCursor = focusRingCursor formFocus
+        , appStartEvent = return
+        , appAttrMap = const theMap
+        }
+
 
 tuiApp :: App TuiState e ResourceName
 tuiApp =
@@ -111,23 +191,14 @@ buildInitialState contents = do
   connect sock (addrAddress serveraddr)
   pure TuiState {stateCursor = tfc, _conn = sock}
 
-borderWidth :: Int
-borderWidth = 0
-borderHeight :: Int
-borderHeight = 0
-
-drawTui :: TuiState -> [Widget ResourceName]
-drawTui ts = [addBorder "Editor" (C.center $ vLimitPercent 80 $ hLimitPercent 80 (Widget Fixed Fixed $ do
-              ctx <- getContext
-              render $ selectedTextFieldCursorWidget ResourceName (stateCursor ts)))]
-
-  
-  -- [ forceAttr "text" $
-  --   centerLayer $
-  --   border $
-  --   padLeftRight 1 $ selectedTextFieldCursorWidget ResourceName (stateCursor ts)
-  -- , forceAttr "bg" $ fill ' '
-  -- ]
+--handleLoginEvent :: (Form LoginForm e ResourceName) -> BrickEvent n e -> EventM n (Next (Form LoginForm e ResourceName))
+handleLoginEvent s e = case e of
+                              VtyEvent (EvResize {})     -> continue s
+                              VtyEvent (EvKey KEsc [])   -> halt s
+                              VtyEvent (EvKey KEnter [])  -> halt s
+                              _ -> do
+                                    s' <- handleFormEvent e s 
+                                    continue s'
 
 handleTuiEvent :: TuiState -> BrickEvent n e -> EventM n (Next TuiState)
 handleTuiEvent s e =
@@ -180,8 +251,39 @@ handleTuiEvent s e =
     _ -> continue s
 
 
--- | Helper Functions for UI
+-- | Helper Functions for appDraw
+
+borderWidth :: Int
+borderWidth = 0
+borderHeight :: Int
+borderHeight = 0
+
+-- | Draw Text Editor UI
+drawTui :: TuiState -> [Widget ResourceName]
+drawTui ts = [addBorder "Editor" (Ctr.center $ vLimitPercent 80 $ hLimitPercent 80 (Widget Fixed Fixed $ do
+              ctx <- getContext
+              render $ selectedTextFieldCursorWidget ResourceName (stateCursor ts)))]
 
 -- | Adds a rounded border to a widget with the given label
-addBorder :: Tex.Text -> Widget ResourceName -> Widget ResourceName
+addBorder :: T.Text -> Widget ResourceName -> Widget ResourceName
 addBorder t = withBorderStyle BdrS.unicodeRounded . Bdr.borderWithLabel (txt t)
+
+-- | Draws Login Form
+drawForm :: Form LoginForm e ResourceName -> [Widget ResourceName]
+drawForm f = [Ctr.vCenter $ Ctr.hCenter form <=> Ctr.hCenter help]
+    where
+        form = Bdr.border $ padTop (Pad 1) $ hLimit 50 $ renderForm f
+        help = padTop (Pad 1) $ Bdr.borderWithLabel (str "Help") body
+        body = str $ "- Name is free-form text\n" <>
+                     "- Please enter filename with extension\n"
+
+-- | Make Login Form
+mkForm :: LoginForm -> Form LoginForm e ResourceName
+mkForm = 
+  let label s w = padBottom (Pad 1) $
+                    (vLimit 1 $ hLimit 15 $ str s <+> fill ' ') <+> w
+    in newForm [ label "User Name" @@=
+                   editTextField uname UsernameField (Just 1)
+               , label "File Name" @@=
+                   editTextField fname FilenameField (Just 1)
+               ]

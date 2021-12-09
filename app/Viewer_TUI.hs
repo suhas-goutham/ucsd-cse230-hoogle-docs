@@ -13,6 +13,7 @@ import Brick.Util
 import Brick.Widgets.Border
 import Brick.Widgets.Center
 import Brick.Widgets.Core
+import Brick.Widgets.List as L
 import Control.Monad
 import Control.Monad.Fix (fix)
 import Cursor.Brick.TextField
@@ -74,7 +75,7 @@ sendMess sock s = do
               return Nothing
 
 main :: IO ()
-main = tui
+main = v_tui
 
 data ServerMessage
   = S_Character Char
@@ -90,8 +91,8 @@ data ServerMessage
 
 newtype ConnectionTick = ConnectionTick ServerMessage
 
-tui :: IO ()
-tui = do
+v_tui :: IO ()
+v_tui = do
   args <- getArgs
   case args of
     [] -> die "No argument to choose file to edit."
@@ -146,7 +147,8 @@ tui = do
                         loop
 
         endState <- customMain initialVty buildVty (Just eventChan) tuiApp initialState
-        putStr ( unpack (rebuildTextFieldCursor (stateCursor endState)))
+        print endState
+        -- putStr ( unpack (rebuildTextFieldCursor (stateCursor endState)))
         -- | Edits on the Viewer side are not committed to the document
         -- let contents' = rebuildTextFieldCursor (stateCursor endState)
         -- unless (contents == contents') $ T.writeFile (fromAbsFile path) contents'
@@ -156,7 +158,10 @@ recvMess sock = do
     return (C.unpack x)
 
 data ResourceName =
-  ResourceName
+    Username
+  | Filename
+  | OwnView
+  | ResourceName
   deriving (Show, Eq, Ord)
 
 tuiApp :: App TuiState ConnectionTick ResourceName

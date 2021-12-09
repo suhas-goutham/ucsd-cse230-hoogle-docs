@@ -4,3 +4,4 @@
 4. Club all TUI code in one separate file - Viewer and Owner have different handleEvent functions
 5. Menus - Each doc needs an owner field
 6. Fix quit
+7. Raise Error when form filed is empty
