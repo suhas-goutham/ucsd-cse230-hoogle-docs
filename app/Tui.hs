@@ -90,7 +90,8 @@ data TuiState =
   TuiState
     { stateCursor :: TextFieldCursor,
       _conn :: Socket,
-      _files :: [FilePath]
+      _files1 :: [T.Text],
+      _currentFile :: FilePath
     }
   deriving (Eq, Show)
 
@@ -104,7 +105,8 @@ data ResourceName =
 -- | Login Form with Username and Filename fields
 data LoginForm =
   LoginForm {
-    _uname :: T.Text
+    _uname :: T.Text,
+    _conn1 :: Socket
   } deriving (Show)
 makeLenses ''LoginForm
 
@@ -175,7 +177,7 @@ buildInitialState contents = do
   let serveraddr = head addrinfos
   sock <- socket (addrFamily serveraddr) Stream defaultProtocol
   connect sock (addrAddress serveraddr)
-  pure TuiState {stateCursor = tfc, _conn = sock}
+  pure TuiState {stateCursor = tfc, _conn = sock, _files1 = [], _currentFile = ""}
 
 handleTEditorEvent :: TEditor -> BrickEvent ResourceName () -> EventM ResourceName (Next TEditor)
 handleTEditorEvent gs ev = case gs of
@@ -196,13 +198,20 @@ handleLoginEvent s e = do
                         let name = ""
                         case e of
                               VtyEvent EvResize {}          -> continue (EnterPage s)
-                              VtyEvent (EvKey KEsc [])      -> halt (EnterPage s)
+                              VtyEvent (EvKey KEsc [])      -> do
+                                                                let sock = formState s ^. conn1
+                                                                liftIO (sendMess sock "quit")
+                                                                halt (EnterPage s) -- Close connection
                               VtyEvent (EvKey KEnter [])    -> do
                                                                 let name = formState s ^. uname
                                                                 tuiSt <- liftIO (readFileTui "abc.txt")     -- REPLACE PLACEHOLDER
                                                                 let sock = tuiSt ^. conn
                                                                 liftIO (sendMess sock (T.unpack name))
-                                                                continue (FileSelectPage (L.list ResourceName (Vec.fromList ["xyz.txt","abc.txt"]) 2))
+                                                                msg <- liftIO (recv sock 1024)
+                                                                let text1 = T.pack (C.unpack msg)
+                                                                let text2 = T.splitOn (T.pack ",") text1
+                                                                let length_t = length text2
+                                                                continue (FileSelectPage (L.list ResourceName (Vec.fromList text2) length_t))
                               VtyEvent (EvKey (KChar c) []) -> do
                                                                 s' <- handleFormEvent e s
                                                                 continue (EnterPage s')
@@ -218,7 +227,12 @@ handleFileSelectEvent s (VtyEvent e) = do
                               (EvKey KEnter [])
                                     | Just i <- L.listSelectedElement s -> do
                                         tuiSt <- liftIO (readFileTui (snd i))
-                                        continue (EditorPage tuiSt)
+                                        let tfc = stateCursor tuiSt
+                                        let sock = tuiSt ^. conn
+                                        let files = tuiSt ^. files1
+                                        let current = T.unpack (snd i)
+                                        let s' = tuiSt {stateCursor = tfc, _conn = sock, _files1 = files, _currentFile = current}
+                                        continue (EditorPage s')
                               ev -> continue . FileSelectPage =<< L.handleListEvent ev s
 
 handleTuiEvent :: TuiState -> BrickEvent n e -> EventM ResourceName (Next TEditor)
@@ -270,7 +284,16 @@ handleTuiEvent s e =
             EvKey KEsc [] -> do
                               let contents' = rebuildTextFieldCursor (stateCursor s)
                               liftIO (putStrLn (T.unpack contents'))
-                              continue (EnterPage (mkForm (LoginForm {_uname = ""})))
+                              let fp = "shared_files/" ++ (s ^. currentFile)
+                              path <- resolveFile' fp
+                              liftIO (IO.writeFile (fromAbsFile path) contents')
+                            
+                              let sock = s ^. conn
+                              let text2 = s ^. files1
+                              let length_t = length text2
+
+                              continue (FileSelectPage (L.list ResourceName (Vec.fromList text2) length_t))
+                              
             _ -> continue (EditorPage s)
     _ -> continue (EditorPage s)
 
