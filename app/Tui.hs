@@ -13,7 +13,7 @@ import Brick.Util
 import Brick.Widgets.Border
 import Brick.Widgets.Center
 import Brick.Widgets.Core
-import Brick.Forms 
+import Brick.Forms
  ( Form
   , newForm
   , formState
@@ -95,14 +95,12 @@ makeLenses ''TuiState
 data ResourceName =
     ResourceName
   | UsernameField
-  | FilenameField
   deriving (Show, Eq, Ord)
 
 -- | Login Form with Username and Filename fields
-data LoginForm = 
+data LoginForm =
   LoginForm {
-    _uname :: T.Text,
-    _fname :: T.Text
+    _uname :: T.Text
   } deriving (Show)
 makeLenses ''LoginForm
 
@@ -112,11 +110,12 @@ theMap = attrMap defAttr
   , (E.editFocusedAttr, black `on` yellow)
   , (invalidFormInputAttr, white `on` red)
   , (focusedFormInputAttr, black `on` yellow)
+  , ("text", fg red)
+  , ("bg", fg blue)
   ]
 
-data Editor =
-    EnterPage LoginForm
-  -- | FileSelect MenuList
+data TEditor =
+    EnterPage (Form LoginForm () ResourceName)
   | EditorPage TuiState
 
 sendMess :: Socket -> String -> IO (Maybe String)
@@ -134,21 +133,14 @@ tui = do
   case args of
     [] -> die "No argument to choose file to edit."
     (fp:_) -> do
-      path <- resolveFile' fp
-      maybeContents <- forgivingAbsence $ IO.readFile (fromAbsFile path)
-      let contents = fromMaybe "" maybeContents
-      -- initialState <- buildInitialState contents
-      let initForm = mkForm (LoginForm {_uname = "", _fname = ""})
+      let initForm = mkForm (LoginForm {_uname = ""})
       let buildVty = do
                       v <- mkVty =<< standardIOConfig
                       setMode (outputIface v) Mouse True
                       return v
       initialVty <- buildVty
-      endForm <- customMain initialVty buildVty Nothing formApp initForm
-      
-      print $ formState endForm
-
-
+      endForm <- customMain initialVty buildVty Nothing app (EnterPage initForm)
+      print "abc"
       -- endState <- defaultMain tuiApp initialState
       -- let contents' = rebuildTextFieldCursor (stateCursor endState)
       -- unless (contents == contents') $ IO.writeFile (fromAbsFile path) contents'
@@ -158,29 +150,15 @@ tui = do
 -- Actual Editor App
 -- %%%%%%%%%%%%%%%%%%%%%
 
-app s = App{
-  
-}
-
-formApp :: App (Form LoginForm e ResourceName) e ResourceName
-formApp =
-    App { appDraw = drawForm
-        , appHandleEvent = handleLoginEvent
-        , appChooseCursor = focusRingCursor formFocus
+app :: App TEditor () ResourceName
+app = App{
+          appDraw = drawEditor
+        , appHandleEvent = handleTEditorEvent
+        , appChooseCursor = showFirstCursor
         , appStartEvent = return
         , appAttrMap = const theMap
-        }
 
-
-tuiApp :: App TuiState e ResourceName
-tuiApp =
-  App
-    { appDraw = drawTui
-    , appChooseCursor = showFirstCursor
-    , appHandleEvent = handleTuiEvent
-    , appStartEvent = pure
-    , appAttrMap = const $ attrMap mempty [("text", fg red), ("bg", fg blue)]
-    }
+}
 
 buildInitialState :: Text -> IO TuiState
 buildInitialState contents = do
@@ -191,28 +169,50 @@ buildInitialState contents = do
   connect sock (addrAddress serveraddr)
   pure TuiState {stateCursor = tfc, _conn = sock}
 
---handleLoginEvent :: (Form LoginForm e ResourceName) -> BrickEvent n e -> EventM n (Next (Form LoginForm e ResourceName))
-handleLoginEvent s e = case e of
-                              VtyEvent (EvResize {})     -> continue s
-                              VtyEvent (EvKey KEsc [])   -> halt s
-                              VtyEvent (EvKey KEnter [])  -> halt s
-                              _ -> do
-                                    s' <- handleFormEvent e s 
-                                    continue s'
+handleTEditorEvent :: TEditor -> BrickEvent ResourceName () -> EventM ResourceName (Next TEditor)
+handleTEditorEvent gs ev = case gs of
+  EnterPage lf -> handleLoginEvent lf ev
+  EditorPage ts -> handleTuiEvent ts ev
 
-handleTuiEvent :: TuiState -> BrickEvent n e -> EventM n (Next TuiState)
+readFileTui :: IO TuiState
+readFileTui =  do
+  let fp = "abc.txt"
+  path <- resolveFile' fp
+  maybeContents <- forgivingAbsence $ IO.readFile (fromAbsFile path)
+  let contents = fromMaybe "" maybeContents
+  buildInitialState contents
+
+handleLoginEvent :: Form LoginForm () ResourceName -> BrickEvent ResourceName () -> EventM ResourceName (Next TEditor)
+handleLoginEvent s e = do
+                        let name = ""
+                        case e of
+                              VtyEvent EvResize {}          -> continue (EnterPage s)
+                              VtyEvent (EvKey KEsc [])      -> halt (EnterPage s)
+                              VtyEvent (EvKey KEnter [])    -> do
+                                                                let name = formState s ^. uname
+                                                                tuiSt <- liftIO readFileTui
+                                                                let sock = tuiSt ^. conn
+                                                                liftIO (sendMess sock (T.unpack name))
+                                                                continue (EditorPage tuiSt)
+                              VtyEvent (EvKey (KChar c) []) -> do
+                                                                s' <- handleFormEvent e s
+                                                                continue (EnterPage s')
+                              _                             -> do
+                                                                continue (EnterPage s)
+
+handleTuiEvent :: TuiState -> BrickEvent n e -> EventM ResourceName (Next TEditor)
 handleTuiEvent s e =
   case e of
-    VtyEvent vtye -> 
+    VtyEvent vtye ->
       let mDo ::
                (TextFieldCursor -> Maybe TextFieldCursor)
-            -> EventM n (Next TuiState)
+            -> EventM n (Next TEditor)
           mDo func = do
             let tfc = stateCursor s
             let tfc' = fromMaybe tfc $ func tfc
             let sock = s ^. conn
             let s' = s {stateCursor = tfc', _conn = sock}
-            continue s'
+            continue (EditorPage s')
        in case vtye of
             EvKey (KChar c) [] -> do
               let sock = s ^. conn
@@ -246,9 +246,9 @@ handleTuiEvent s e =
               let sock = s ^. conn
               liftIO (sendMess sock "enter")
               mDo $ Just . textFieldCursorInsertNewline . Just
-            EvKey KEsc [] -> halt s
-            _ -> continue s
-    _ -> continue s
+            EvKey KEsc [] -> halt (EditorPage s)
+            _ -> continue (EditorPage s)
+    _ -> continue (EditorPage s)
 
 
 -- | Helper Functions for appDraw
@@ -257,6 +257,11 @@ borderWidth :: Int
 borderWidth = 0
 borderHeight :: Int
 borderHeight = 0
+
+drawEditor :: TEditor -> [Widget ResourceName]
+drawEditor g = case g of
+  EnterPage  loginForm -> drawForm loginForm
+  EditorPage tuiState  -> drawTui tuiState
 
 -- | Draw Text Editor UI
 drawTui :: TuiState -> [Widget ResourceName]
@@ -274,16 +279,13 @@ drawForm f = [Ctr.vCenter $ Ctr.hCenter form <=> Ctr.hCenter help]
     where
         form = Bdr.border $ padTop (Pad 1) $ hLimit 50 $ renderForm f
         help = padTop (Pad 1) $ Bdr.borderWithLabel (str "Help") body
-        body = str $ "- Name is free-form text\n" <>
-                     "- Please enter filename with extension\n"
+        body = str "- Name is free-form text\n"
 
 -- | Make Login Form
 mkForm :: LoginForm -> Form LoginForm e ResourceName
-mkForm = 
+mkForm =
   let label s w = padBottom (Pad 1) $
                     (vLimit 1 $ hLimit 15 $ str s <+> fill ' ') <+> w
     in newForm [ label "User Name" @@=
                    editTextField uname UsernameField (Just 1)
-               , label "File Name" @@=
-                   editTextField fname FilenameField (Just 1)
                ]
