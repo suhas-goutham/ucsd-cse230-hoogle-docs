@@ -1,6 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE BlockArguments #-}
+{-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 -- module Tui where
 
 import System.Directory
@@ -44,6 +46,7 @@ import Cursor.Types
 import Data.Maybe
 import Data.Text (Text)
 import qualified Data.Text.IO as IO
+import qualified Data.Vector as Vec
 import Graphics.Vty
 import Graphics.Vty.Attributes
 import Graphics.Vty.Input.Events
@@ -86,7 +89,8 @@ import qualified Brick.Widgets.ProgressBar as P
 data TuiState =
   TuiState
     { stateCursor :: TextFieldCursor,
-      _conn :: Socket
+      _conn :: Socket,
+      _files :: [FilePath]
     }
   deriving (Eq, Show)
 
@@ -104,6 +108,9 @@ data LoginForm =
   } deriving (Show)
 makeLenses ''LoginForm
 
+-- | MenuList for file selection
+type MenuList = L.List ResourceName T.Text
+
 theMap :: AttrMap
 theMap = attrMap defAttr
   [ (E.editAttr, white `on` black)
@@ -116,6 +123,7 @@ theMap = attrMap defAttr
 
 data TEditor =
     EnterPage (Form LoginForm () ResourceName)
+  | FileSelectPage MenuList
   | EditorPage TuiState
 
 sendMess :: Socket -> String -> IO (Maybe String)
@@ -139,7 +147,7 @@ tui = do
                       setMode (outputIface v) Mouse True
                       return v
       initialVty <- buildVty
-      endForm <- customMain initialVty buildVty Nothing app (EnterPage initForm)
+      endState <- customMain initialVty buildVty Nothing app (EnterPage initForm)
       return ()
       -- endState <- defaultMain tuiApp initialState
       -- let contents' = rebuildTextFieldCursor (stateCursor endState)
@@ -172,11 +180,12 @@ buildInitialState contents = do
 handleTEditorEvent :: TEditor -> BrickEvent ResourceName () -> EventM ResourceName (Next TEditor)
 handleTEditorEvent gs ev = case gs of
   EnterPage lf -> handleLoginEvent lf ev
+  FileSelectPage l -> handleFileSelectEvent l ev
   EditorPage ts -> handleTuiEvent ts ev
 
-readFileTui :: IO TuiState
-readFileTui =  do
-  let fp = "abc.txt"
+readFileTui :: T.Text -> IO TuiState
+readFileTui fname =  do
+  let fp = T.unpack fname
   path <- resolveFile' fp
   maybeContents <- forgivingAbsence $ IO.readFile (fromAbsFile path)
   let contents = fromMaybe "" maybeContents
@@ -190,15 +199,27 @@ handleLoginEvent s e = do
                               VtyEvent (EvKey KEsc [])      -> halt (EnterPage s)
                               VtyEvent (EvKey KEnter [])    -> do
                                                                 let name = formState s ^. uname
-                                                                tuiSt <- liftIO readFileTui
+                                                                tuiSt <- liftIO (readFileTui "abc.txt")     -- REPLACE PLACEHOLDER
                                                                 let sock = tuiSt ^. conn
                                                                 liftIO (sendMess sock (T.unpack name))
-                                                                continue (EditorPage tuiSt)
+                                                                continue (FileSelectPage (L.list ResourceName (Vec.fromList ["xyz.txt","abc.txt"]) 2))
                               VtyEvent (EvKey (KChar c) []) -> do
                                                                 s' <- handleFormEvent e s
                                                                 continue (EnterPage s')
                               _                             -> do
                                                                 continue (EnterPage s)
+
+handleFileSelectEvent :: MenuList -> BrickEvent n e -> EventM ResourceName (Next TEditor)
+handleFileSelectEvent s (VtyEvent e) = do
+                            let initForm = mkForm (LoginForm {_uname = ""})
+                            case e of
+                              (EvKey KEsc []) -> do
+                                                  continue (EnterPage initForm)
+                              (EvKey KEnter [])
+                                    | Just i <- L.listSelectedElement s -> do
+                                        tuiSt <- liftIO (readFileTui (snd i))
+                                        continue (EditorPage tuiSt)
+                              ev -> continue . FileSelectPage =<< L.handleListEvent ev s
 
 handleTuiEvent :: TuiState -> BrickEvent n e -> EventM ResourceName (Next TEditor)
 handleTuiEvent s e =
@@ -246,7 +267,10 @@ handleTuiEvent s e =
               let sock = s ^. conn
               liftIO (sendMess sock "enter")
               mDo $ Just . textFieldCursorInsertNewline . Just
-            EvKey KEsc [] -> halt (EditorPage s)
+            EvKey KEsc [] -> do
+                              let contents' = rebuildTextFieldCursor (stateCursor s)
+                              liftIO (putStrLn (T.unpack contents'))
+                              continue (EnterPage (mkForm (LoginForm {_uname = ""})))
             _ -> continue (EditorPage s)
     _ -> continue (EditorPage s)
 
@@ -261,6 +285,7 @@ borderHeight = 0
 drawEditor :: TEditor -> [Widget ResourceName]
 drawEditor g = case g of
   EnterPage  loginForm -> drawForm loginForm
+  FileSelectPage fileList -> drawList fileList
   EditorPage tuiState  -> drawTui tuiState
 
 -- | Draw Text Editor UI
@@ -289,3 +314,18 @@ mkForm =
     in newForm [ label "User Name" @@=
                    editTextField uname UsernameField (Just 1)
                ]
+
+-- | Renders a list widget 
+drawList :: MenuList -> [Widget ResourceName]
+drawList l = [listWidget]
+  where
+    listWidget = L.renderList listDrawElement True l
+
+-- | Draws an element of a list based on if it is selected
+listDrawElement :: Bool -> T.Text -> Widget n
+listDrawElement sel t = Ctr.hCenter $ txt symbol <+> txt t
+  where
+    symbol =
+      if sel
+        then "-> "
+        else "  "
