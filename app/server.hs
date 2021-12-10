@@ -22,21 +22,21 @@ main = do
 runTCPEchoServerForever :: (Eq a, Num a) => Socket -> Chan (a, String) -> a -> IO b
 runTCPEchoServerForever sock chan msgNum = do 
   (conn, _)     <- accept sock
-  files_list    <- getFileList
-  sendAll conn (C.pack files_list)
-  threadDelay 100000
+  -- files_list    <- getFileList
+  -- sendAll conn (C.pack files_list)
+  -- threadDelay 100000
   _ <- forkIO (rrLoop conn chan msgNum) -- conn and sock are same
   runTCPEchoServerForever sock chan $! msgNum + 1
 
-getFileList :: IO String
-getFileList = do
-  setCurrentDirectory "shared_files"
-  _cd <- getCurrentDirectory
-  _file <- getDirectoryContents _cd
-  onlyFiles <- filterM doesFileExist _file
-  let mes = convertListToString onlyFiles ""
-  setCurrentDirectory ".."
-  return mes
+-- getFileList :: IO String
+-- getFileList = do
+--   setCurrentDirectory "shared_files"
+--   _cd <- getCurrentDirectory
+--   _file <- getDirectoryContents _cd
+--   onlyFiles <- filterM doesFileExist _file
+--   let mes = convertListToString onlyFiles ""
+--   setCurrentDirectory ".."
+--   return mes
 
 convertListToString :: [FilePath] -> String -> String
 convertListToString [] x = init x
