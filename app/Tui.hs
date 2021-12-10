@@ -83,6 +83,7 @@ import qualified Data.Text as T
 import qualified Brick.Widgets.Center as Ctr
 import qualified Brick.Widgets.Edit as E
 import qualified Brick.Widgets.ProgressBar as P
+import Control.Exception (handle)
 
 -- | Brick Imports End
 
@@ -115,7 +116,7 @@ makeLenses ''LoginForm
 data NewFileForm =
   NewFileForm {
     _fname :: T.Text,
-    _conn1 :: Socket
+    _conn2 :: Socket
   } deriving (Show)
 makeLenses ''NewFileForm
 
@@ -193,6 +194,8 @@ buildInitialState contents = do
 handleTEditorEvent :: TEditor -> BrickEvent ResourceName () -> EventM ResourceName (Next TEditor)
 handleTEditorEvent gs ev = case gs of
   EnterPage lf -> handleLoginEvent lf ev
+  ActionSelectPage ops -> handleActionSelectEvent ops ev
+  NewFilePage ff -> handleNewFileEvent ff ev
   FileSelectPage l -> handleFileSelectEvent l ev
   EditorPage ts -> handleTuiEvent ts ev
 
@@ -218,11 +221,12 @@ handleLoginEvent s e = do
                                                                 tuiSt <- liftIO (readFileTui "abc.txt")     -- REPLACE PLACEHOLDER
                                                                 let sock = tuiSt ^. conn
                                                                 liftIO (sendMess sock (T.unpack name))
-                                                                msg <- liftIO (recv sock 1024)
-                                                                let text1 = T.pack (C.unpack msg)
-                                                                let text2 = T.splitOn (T.pack ",") text1
-                                                                let length_t = length text2
-                                                                continue (FileSelectPage (L.list ResourceName (Vec.fromList text2) length_t))
+                                                                -- msg <- liftIO (recv sock 1024)
+                                                                -- let text1 = T.pack (C.unpack msg)
+                                                                -- let text2 = T.splitOn (T.pack ",") text1
+                                                                -- let length_t = length text2
+                                                                let text2 = ["Create New File", "Edit/View Existing File"]
+                                                                continue (ActionSelectPage (L.list ResourceName (Vec.fromList text2) 2))
                               VtyEvent (EvKey (KChar c) []) -> do
                                                                 s' <- handleFormEvent e s
                                                                 continue (EnterPage s')
@@ -231,14 +235,52 @@ handleLoginEvent s e = do
 
 handleActionSelectEvent :: MenuList -> BrickEvent n e -> EventM ResourceName (Next TEditor)
 handleActionSelectEvent s (VtyEvent e) = do
-                                          let initForm = mkForm (NewFileForm {_fname = ""})
+                                          let initForm = mkForm (LoginForm {_uname = ""})
+                                          let initNewForm = mkNewFileForm (NewFileForm {_fname = ""})
                                           case e of 
                                             (EvKey KEsc  []) -> do
                                                                   continue (EnterPage initForm)
                                             (EvKey KEnter []) 
                                                    | Just i <- L.listSelected s -> case i of 
-                                                     0 -> NewFilePage initForm
-                                                     1 -> handleFileSelectEvent -- FILL FROM HERE
+                                                     0 -> continue (NewFilePage initNewForm)
+                                                     1 -> do
+                                                            tuiSt <- liftIO (readFileTui "abc.txt")     -- REPLACE PLACEHOLDER
+                                                            let sock = tuiSt ^. conn
+                                                            msg <- liftIO (recv sock 1024)
+                                                            let text1 = T.pack (C.unpack msg)
+                                                            let text2 = T.splitOn (T.pack ",") text1
+                                                            let length_t = length text2
+                                                            continue (FileSelectPage (L.list ResourceName (Vec.fromList text2) length_t)) 
+                                            ev -> continue . ActionSelectPage =<< L.handleListEvent ev s
+
+handleNewFileEvent :: Form NewFileForm () ResourceName -> BrickEvent ResourceName () -> EventM ResourceName (Next TEditor)
+handleNewFileEvent s e = do
+                          let filname = ""
+                          case e of
+                                VtyEvent EvResize {}          -> continue (NewFilePage s)
+                                VtyEvent (EvKey KEsc [])      -> do
+                                                                  let text2 = ["Create New File", "Edit/View Existing File"]
+                                                                  continue (ActionSelectPage (L.list ResourceName (Vec.fromList text2) 2))
+                                VtyEvent (EvKey KEnter [])    -> do
+                                                                  let filname = formState s ^. fname
+                                                                  tuiSt <- liftIO (readFileTui "abc.txt")     -- REPLACE PLACEHOLDER
+                                                                  let sock = tuiSt ^. conn
+                                                                  liftIO (sendMess sock (T.unpack filname))
+                                                                  tuiSt <- liftIO (readFileTui filname)
+                                                                  let tfc = stateCursor tuiSt
+                                                                  let sock = tuiSt ^. conn
+                                                                  let files = tuiSt ^. files1
+                                                                  let current = T.unpack filname
+                                                                  let s' = tuiSt {stateCursor = tfc, _conn = sock, _files1 = files, _currentFile = current}
+                                                                  continue (EditorPage s')
+                                                                  
+                                VtyEvent (EvKey (KChar c) []) -> do
+                                                                  s' <- handleFormEvent e s
+                                                                  continue (NewFilePage s')
+                                _                             -> do
+                                                                  continue (NewFilePage s)
+
+
 
 
 handleFileSelectEvent :: MenuList -> BrickEvent n e -> EventM ResourceName (Next TEditor)
@@ -310,12 +352,14 @@ handleTuiEvent s e =
                               let fp = "shared_files/" ++ (s ^. currentFile)
                               path <- resolveFile' fp
                               liftIO (IO.writeFile (fromAbsFile path) contents')
-                            
-                              let sock = s ^. conn
-                              let text2 = s ^. files1
-                              let length_t = length text2
 
-                              continue (FileSelectPage (L.list ResourceName (Vec.fromList text2) length_t))
+                              let text2 = ["Create New File", "Edit/View Existing File"]
+                              continue (ActionSelectPage (L.list ResourceName (Vec.fromList text2) 2))
+                              -- let sock = s ^. conn
+                              -- let text2 = s ^. files1
+                              -- let length_t = length text2
+
+                              -- continue (FileSelectPage (L.list ResourceName (Vec.fromList text2) length_t))
                               
             _ -> continue (EditorPage s)
     _ -> continue (EditorPage s)
@@ -331,8 +375,9 @@ borderHeight = 0
 drawEditor :: TEditor -> [Widget ResourceName]
 drawEditor g = case g of
   EnterPage  loginForm -> drawForm loginForm
-  FileSelectPage fileList -> drawList fileList
   ActionSelectPage actionList -> drawList actionList
+  NewFilePage f -> drawFileForm f
+  FileSelectPage fileList -> drawList fileList
   EditorPage tuiState  -> drawTui tuiState
 
 -- | Draw Text Editor UI
@@ -353,6 +398,14 @@ drawForm f = [Ctr.vCenter $ Ctr.hCenter form <=> Ctr.hCenter help]
         help = padTop (Pad 1) $ Bdr.borderWithLabel (str "Help") body
         body = str "- Name is free-form text\n"
 
+-- | Draws Login Form
+drawFileForm :: Form NewFileForm e ResourceName -> [Widget ResourceName]
+drawFileForm f = [Ctr.vCenter $ Ctr.hCenter form <=> Ctr.hCenter help]
+    where
+        form = Bdr.border $ padTop (Pad 1) $ hLimit 50 $ renderForm f
+        help = padTop (Pad 1) $ Bdr.borderWithLabel (str "Help") body
+        body = str "- Please enter file names with extension\n"
+
 -- | Make Login Form
 mkForm :: LoginForm -> Form LoginForm e ResourceName
 mkForm =
@@ -360,6 +413,15 @@ mkForm =
                     (vLimit 1 $ hLimit 15 $ str s <+> fill ' ') <+> w
     in newForm [ label "User Name" @@=
                    editTextField uname UsernameField (Just 1)
+               ]
+
+-- | Make New File Form
+mkNewFileForm :: NewFileForm -> Form NewFileForm e ResourceName
+mkNewFileForm =
+  let label s w = padBottom (Pad 1) $
+                    (vLimit 1 $ hLimit 15 $ str s <+> fill ' ') <+> w
+    in newForm [ label "File Name" @@=
+                   editTextField fname FilenameField (Just 1)
                ]
 
 -- | Renders a list widget 
