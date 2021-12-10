@@ -100,15 +100,24 @@ makeLenses ''TuiState
 data ResourceName =
     ResourceName
   | UsernameField
+  | FilenameField
   deriving (Show, Eq, Ord)
 
--- | Login Form with Username and Filename fields
+-- | Login Form with Username field
 data LoginForm =
   LoginForm {
     _uname :: T.Text,
     _conn1 :: Socket
   } deriving (Show)
 makeLenses ''LoginForm
+
+-- | Login Form with Filename field
+data NewFileForm =
+  NewFileForm {
+    _fname :: T.Text,
+    _conn1 :: Socket
+  } deriving (Show)
+makeLenses ''NewFileForm
 
 -- | MenuList for file selection
 type MenuList = L.List ResourceName T.Text
@@ -125,6 +134,8 @@ theMap = attrMap defAttr
 
 data TEditor =
     EnterPage (Form LoginForm () ResourceName)
+  | ActionSelectPage MenuList
+  | NewFilePage (Form NewFileForm () ResourceName)
   | FileSelectPage MenuList
   | EditorPage TuiState
 
@@ -218,6 +229,18 @@ handleLoginEvent s e = do
                               _                             -> do
                                                                 continue (EnterPage s)
 
+handleActionSelectEvent :: MenuList -> BrickEvent n e -> EventM ResourceName (Next TEditor)
+handleActionSelectEvent s (VtyEvent e) = do
+                                          let initForm = mkForm (NewFileForm {_fname = ""})
+                                          case e of 
+                                            (EvKey KEsc  []) -> do
+                                                                  continue (EnterPage initForm)
+                                            (EvKey KEnter []) 
+                                                   | Just i <- L.listSelected s -> case i of 
+                                                     0 -> NewFilePage initForm
+                                                     1 -> handleFileSelectEvent -- FILL FROM HERE
+
+
 handleFileSelectEvent :: MenuList -> BrickEvent n e -> EventM ResourceName (Next TEditor)
 handleFileSelectEvent s (VtyEvent e) = do
                             let initForm = mkForm (LoginForm {_uname = ""})
@@ -309,6 +332,7 @@ drawEditor :: TEditor -> [Widget ResourceName]
 drawEditor g = case g of
   EnterPage  loginForm -> drawForm loginForm
   FileSelectPage fileList -> drawList fileList
+  ActionSelectPage actionList -> drawList actionList
   EditorPage tuiState  -> drawTui tuiState
 
 -- | Draw Text Editor UI
