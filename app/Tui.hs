@@ -201,7 +201,7 @@ handleTEditorEvent gs ev = case gs of
 
 readFileTui :: T.Text -> IO TuiState
 readFileTui fname =  do
-  let fp = T.unpack fname
+  let fp = "shared_files/" ++ T.unpack fname
   path <- resolveFile' fp
   maybeContents <- forgivingAbsence $ IO.readFile (fromAbsFile path)
   let contents = fromMaybe "" maybeContents
@@ -263,9 +263,9 @@ handleNewFileEvent s e = do
                                                                   continue (ActionSelectPage (L.list ResourceName (Vec.fromList text2) 2))
                                 VtyEvent (EvKey KEnter [])    -> do
                                                                   let filname = formState s ^. fname
-                                                                  tuiSt <- liftIO (readFileTui "abc.txt")     -- REPLACE PLACEHOLDER
-                                                                  let sock = tuiSt ^. conn
-                                                                  liftIO (sendMess sock (T.unpack filname))
+                                                                  -- tuiSt <- liftIO (readFileTui "abc.txt")     -- REPLACE PLACEHOLDER
+                                                                  -- let sock = tuiSt ^. conn
+                                                                  -- liftIO (sendMess sock (T.unpack filname))
                                                                   tuiSt <- liftIO (readFileTui filname)
                                                                   let tfc = stateCursor tuiSt
                                                                   let sock = tuiSt ^. conn
