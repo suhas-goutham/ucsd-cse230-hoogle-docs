@@ -42,7 +42,7 @@ writer sock broadcast = do
                         msg <- recv sock 1024
                         let s = C.unpack msg
                         case s of
-                          "quit" -> do
+                          "" -> do
                                       print "TCP client closing"
                                       threadDelay 100000
                                       close sock

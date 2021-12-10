@@ -140,7 +140,7 @@ tui = do
                       return v
       initialVty <- buildVty
       endForm <- customMain initialVty buildVty Nothing app (EnterPage initForm)
-      print "abc"
+      return ()
       -- endState <- defaultMain tuiApp initialState
       -- let contents' = rebuildTextFieldCursor (stateCursor endState)
       -- unless (contents == contents') $ IO.writeFile (fromAbsFile path) contents'
