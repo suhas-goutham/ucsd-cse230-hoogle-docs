@@ -328,7 +328,9 @@ handleFileSelectEvent (s,name, sock) (VtyEvent e) = do
                             let initForm = mkForm (LoginForm {_uname = ""})
                             case e of
                               (EvKey KEsc []) -> do
-                                                  continue (EnterPage (initForm, sock))
+                                                  let text2 = ["Create New File", "Edit/View Existing File"]
+                                                  continue (ActionSelectPage ((L.list ResourceName (Vec.fromList text2) 2),name, sock))
+                                                  -- continue (EnterPage (initForm, sock))
                               (EvKey KEnter [])
                                     | Just i <- L.listSelectedElement s -> do
                                         tuiSt <- liftIO (readFileTui (snd i))
