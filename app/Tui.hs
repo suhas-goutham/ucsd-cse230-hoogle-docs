@@ -9,6 +9,7 @@ import qualified System.Directory as Dir
 import Control.Concurrent
 import Brick (txt)
 import Brick.AttrMap
+import Brick.BChan (newBChan, writeBChan)
 import Brick.Main
 import Brick.Types
 import Brick.Util
@@ -40,6 +41,7 @@ import Brick.Focus
   )
 import Brick.Widgets.List as L
 import Control.Monad
+import Control.Monad.Fix (fix)
 import Cursor.Brick.TextField
 import Cursor.TextField
 import Cursor.Types
@@ -117,6 +119,20 @@ data NewFileForm =
   } deriving (Show)
 makeLenses ''NewFileForm
 
+data ServerMessage
+  = S_Character Char
+  | S_Up
+  | S_Down
+  | S_Right
+  | S_Left
+  | S_Enter
+  | S_Delete
+  | S_Backspace
+  | S_Quit
+  deriving (Generic)
+
+newtype ConnectionTick = ConnectionTick ServerMessage
+
 -- | MenuList for file selection
 type MenuList = L.List ResourceName T.Text
 
@@ -131,16 +147,21 @@ theMap = attrMap defAttr
   ]
 
 data TEditor =
-    EnterPage ((Form LoginForm () ResourceName), Socket)
+    EnterPage ((Form LoginForm ConnectionTick ResourceName), Socket)
   | ActionSelectPage (MenuList, T.Text, Socket)
-  | NewFilePage ((Form NewFileForm () ResourceName), T.Text, Socket)
+  | NewFilePage ((Form NewFileForm ConnectionTick ResourceName), T.Text, Socket)
   | FileSelectPage (MenuList, T.Text, Socket)
-  | EditorPage (TuiState, T.Text, Socket, Bool) 
+  | EditorPage (TuiState, T.Text, Socket)
+  | ViewerPage (TuiState, T.Text, Socket)
 
 sendMess :: Socket -> String -> IO (Maybe String)
 sendMess sock s = do
               sendAll sock $ C.pack s
               return Nothing
+
+recvMess sock = do
+    x <- recv sock 1024
+    return (C.unpack x)
 
 main :: IO ()
 main = tui
@@ -159,7 +180,38 @@ tui = do
                       return v
       initialVty <- buildVty
       sock <- openConnection
-      endState <- customMain initialVty buildVty Nothing app (EnterPage (initForm, sock))
+
+      eventChan <- Brick.BChan.newBChan 10
+
+      reader <- forkIO $ fix $ \loop -> do
+              message <- recvMess sock
+              case message of
+                "up"        -> do
+                                writeBChan eventChan $ ConnectionTick S_Up
+                                loop
+                "down"      -> do
+                                writeBChan eventChan $ ConnectionTick S_Down
+                                loop
+                "left"      -> do
+                                writeBChan eventChan $ ConnectionTick S_Left
+                                loop
+                "right"     -> do
+                                writeBChan eventChan $ ConnectionTick S_Right
+                                loop
+                "backspace" -> do
+                                writeBChan eventChan $ ConnectionTick S_Backspace
+                                loop
+                "delete"    -> do
+                                writeBChan eventChan $ ConnectionTick S_Delete
+                                loop
+                "enter"     -> do
+                                writeBChan eventChan $ ConnectionTick S_Enter
+                                loop
+                _           -> do
+                                writeBChan eventChan $ ConnectionTick (S_Character (head message))
+                                loop
+
+      endState <- customMain initialVty buildVty (Just eventChan) app (EnterPage (initForm, sock))
       return ()
 
 
@@ -167,7 +219,7 @@ tui = do
 -- Actual Editor App
 -- %%%%%%%%%%%%%%%%%%%%%
 
-app :: App TEditor () ResourceName
+app :: App TEditor ConnectionTick ResourceName
 app = App{
           appDraw = drawEditor
         , appHandleEvent = handleTEditorEvent
@@ -182,13 +234,14 @@ buildInitialState contents = do
   let tfc = makeTextFieldCursor contents
   pure TuiState {stateCursor = tfc, _currentFile = ""}
 
-handleTEditorEvent :: TEditor -> BrickEvent ResourceName () -> EventM ResourceName (Next TEditor)
+handleTEditorEvent :: TEditor -> BrickEvent ResourceName ConnectionTick -> EventM ResourceName (Next TEditor)
 handleTEditorEvent gs ev = case gs of
   EnterPage lf -> handleLoginEvent lf ev
   ActionSelectPage ops -> handleActionSelectEvent ops ev
   NewFilePage ff -> handleNewFileEvent ff ev
   FileSelectPage l -> handleFileSelectEvent l ev
-  EditorPage ts -> handleTuiEvent ts ev
+  EditorPage ts -> handleTuiOwnerEvent ts ev
+  ViewerPage ts -> handleTuiViewerEvent ts ev
 
 readFileTui :: T.Text -> IO TuiState
 readFileTui fname =  do
@@ -200,13 +253,13 @@ readFileTui fname =  do
 
 openConnection :: IO Socket
 openConnection = do
-                  addrinfos <- getAddrInfo Nothing (Just "127.0.0.1") (Just "4444")
+                  addrinfos <- getAddrInfo Nothing (Just "127.0.0.1") (Just "4545")
                   let serveraddr = head addrinfos
                   sock <- socket (addrFamily serveraddr) Stream defaultProtocol
                   connect sock (addrAddress serveraddr)
                   return sock
 
-handleLoginEvent :: (Form LoginForm () ResourceName, Socket) -> BrickEvent ResourceName () -> EventM ResourceName (Next TEditor)
+handleLoginEvent :: (Form LoginForm ConnectionTick ResourceName, Socket) -> BrickEvent ResourceName ConnectionTick -> EventM ResourceName (Next TEditor)
 handleLoginEvent (s, sock) e = do
                         let name = ""
                         case e of
@@ -224,7 +277,7 @@ handleLoginEvent (s, sock) e = do
                               _                             -> do
                                                                 continue (EnterPage (s, sock))
 
-handleActionSelectEvent :: (MenuList, T.Text, Socket) -> BrickEvent n e -> EventM ResourceName (Next TEditor)
+handleActionSelectEvent :: (MenuList, T.Text, Socket) -> BrickEvent ResourceName ConnectionTick  -> EventM ResourceName (Next TEditor)
 handleActionSelectEvent (s,name, sock) (VtyEvent e) = do
                                           let initForm = mkForm (LoginForm {_uname = ""})
                                           let initNewForm = mkNewFileForm (NewFileForm {_fname = ""})
@@ -238,13 +291,14 @@ handleActionSelectEvent (s,name, sock) (VtyEvent e) = do
                                                             text1 <- liftIO getFileList
                                                             let text2 = map T.pack text1
                                                             let length_t = length text2
-                                                            continue (FileSelectPage ((L.list ResourceName (Vec.fromList text2) length_t), name, sock)) 
+                                                            continue (FileSelectPage ((L.list ResourceName (Vec.fromList text2) length_t), name, sock))
                                             ev -> do
                                               ss2 <- L.handleListEvent ev s
                                               continue (ActionSelectPage (ss2, name, sock))
-                                              -- continue . ActionSelectPage =<< (L.handleListEvent ev s2)
 
-handleNewFileEvent :: (Form NewFileForm () ResourceName, T.Text, Socket) -> BrickEvent ResourceName () -> EventM ResourceName (Next TEditor)
+handleActionSelectEvent (s,name, sock) _   = do continue (ActionSelectPage (s, name, sock))
+
+handleNewFileEvent :: (Form NewFileForm ConnectionTick ResourceName, T.Text, Socket) -> BrickEvent ResourceName ConnectionTick -> EventM ResourceName (Next TEditor)
 handleNewFileEvent (s, name, sock) e = do
                           let filname = ""
                           case e of
@@ -253,12 +307,12 @@ handleNewFileEvent (s, name, sock) e = do
                                                                   let text2 = ["Create New File", "Edit/View Existing File"]
                                                                   continue (ActionSelectPage ((L.list ResourceName (Vec.fromList text2) 2),name, sock))
                                 VtyEvent (EvKey KEnter [])    -> do
-                                                                  let filname = formState s ^. fname
+                                                                  let filname = T.pack (T.unpack name ++ "_" ++ T.unpack (formState s ^. fname) ++ ".txt")
                                                                   tuiSt <- liftIO (readFileTui filname)
                                                                   let tfc = stateCursor tuiSt
                                                                   let current = T.unpack filname
                                                                   let s' = tuiSt {stateCursor = tfc, _currentFile = current}
-                                                                  continue (EditorPage (s',name, sock, True))
+                                                                  continue (EditorPage (s',name, sock))
                                                                   
                                 VtyEvent (EvKey (KChar c) []) -> do
                                                                   s' <- handleFormEvent e s
@@ -280,19 +334,47 @@ handleFileSelectEvent (s,name, sock) (VtyEvent e) = do
                                         tuiSt <- liftIO (readFileTui (snd i))
                                         let tfc = stateCursor tuiSt
                                         let current = T.unpack (snd i)
+                                        let filename = snd i
                                         let s' = tuiSt {stateCursor = tfc, _currentFile = current}
-                                        continue (EditorPage (s',name, sock, False))
+                                        if (T.isPrefixOf name filename)
+                                          then continue (EditorPage (s',name, sock))
+                                          else continue (ViewerPage (s',name, sock))
                               ev -> do
                                 ss2 <- L.handleListEvent ev s
                                 continue (FileSelectPage (ss2, name, sock))
+handleFileSelectEvent (s,name, sock) _ = do
+                                          continue (FileSelectPage (s, name, sock))
 
-handleTuiEvent :: (TuiState,T.Text, Socket, Bool) -> BrickEvent n e -> EventM ResourceName (Next TEditor)
-handleTuiEvent (s, name, sock, isOwner) e = case isOwner of
-  False -> handleOwnerEvent (s, name, sock) e
-  True -> handleOwnerEvent (s, name, sock) e
+-- handleTuiEvent :: (TuiState,T.Text, Socket, Bool) -> BrickEvent n e -> EventM ResourceName (Next TEditor)
+-- handleTuiEvent (s, name, sock, isOwner) e = case isOwner of
+--   False -> handleOwnerEvent (s, name, sock) e
+--   True -> handleOwnerEvent (s, name, sock) e
 
-handleOwnerEvent :: (TuiState,T.Text, Socket) -> BrickEvent n e -> EventM ResourceName (Next TEditor)
-handleOwnerEvent (s, name, sock) e = do
+handleTuiViewerEvent :: (TuiState,T.Text, Socket) -> BrickEvent n ConnectionTick -> EventM ResourceName (Next TEditor)
+handleTuiViewerEvent (s, name, sock) (AppEvent (ConnectionTick csReceived)) = do
+                                case csReceived of
+                                    S_Character mes     -> mDo (s, name, sock) $ textFieldCursorInsertChar mes . Just
+                                    S_Up                -> mDo (s, name, sock) textFieldCursorSelectPrevLine
+                                    S_Down              -> mDo (s, name, sock) textFieldCursorSelectNextLine
+                                    S_Left              -> mDo (s, name, sock) textFieldCursorSelectPrevChar
+                                    S_Right             -> mDo (s, name, sock) textFieldCursorSelectNextChar
+                                    S_Backspace         -> mDo (s, name, sock) $ dullMDelete . textFieldCursorRemove
+                                    S_Delete            -> mDo (s, name, sock) $ dullMDelete . textFieldCursorDelete
+                                    S_Enter             -> mDo (s, name, sock) $ Just . textFieldCursorInsertNewline . Just
+                                    S_Quit              -> do
+                                                            let text2 = ["Create New File", "Edit/View Existing File"]
+                                                            continue (ActionSelectPage ((L.list ResourceName (Vec.fromList text2) 2),name, sock))
+handleTuiViewerEvent (s, name, sock) (VtyEvent e) = do 
+                                case e of
+                                  (EvKey KEsc []) -> do
+                                                      -- liftIO (close sock)
+                                                      -- sock <- liftIO openConnection
+                                                      let text2 = ["Create New File", "Edit/View Existing File"]
+                                                      continue (ActionSelectPage ((L.list ResourceName (Vec.fromList text2) 2),name, sock))
+                                  _               ->  continue (ViewerPage (s, name, sock))
+
+handleTuiOwnerEvent :: (TuiState,T.Text, Socket) -> BrickEvent n e -> EventM ResourceName (Next TEditor)
+handleTuiOwnerEvent (s, name, sock) e = do
   case e of
     VtyEvent vtye ->
       let mDo ::
@@ -302,7 +384,7 @@ handleOwnerEvent (s, name, sock) e = do
             let tfc = stateCursor s
             let tfc' = fromMaybe tfc $ func tfc
             let s' = s {stateCursor = tfc'}
-            continue (EditorPage (s',name, sock, True))
+            continue (EditorPage (s',name, sock))
        in case vtye of
             EvKey (KChar c) [] -> do
               liftIO (sendMess sock [c])
@@ -335,11 +417,15 @@ handleOwnerEvent (s, name, sock) e = do
                               path <- resolveFile' fp
                               liftIO (IO.writeFile (fromAbsFile path) contents')
 
+                              -- liftIO (close sock)
+
+                              -- sock <- liftIO openConnection
+
                               let text2 = ["Create New File", "Edit/View Existing File"]
                               continue (ActionSelectPage ((L.list ResourceName (Vec.fromList text2) 2),name, sock))
                               
-            _ -> continue (EditorPage (s,name, sock, True))
-    _ -> continue (EditorPage (s,name, sock, True))
+            _ -> continue (EditorPage (s,name, sock))
+    _ -> continue (EditorPage (s,name, sock))
 
 -- | Helper Functions for appDraw
 
@@ -354,7 +440,8 @@ drawEditor g = case g of
   ActionSelectPage (actionList, name, sock) -> drawList actionList
   NewFilePage (f,name, sock) -> drawFileForm f
   FileSelectPage (fileList, name, sock) -> drawList fileList
-  EditorPage (tuiState,name, sock, isOwner)  -> drawTui tuiState
+  EditorPage (tuiState, name, sock)  -> drawTui tuiState
+  ViewerPage (tuiState, name, sock)  -> drawTui tuiState
 
 -- | Draw Text Editor UI
 drawTui :: TuiState -> [Widget ResourceName]
@@ -380,7 +467,7 @@ drawFileForm f = [Ctr.vCenter $ Ctr.hCenter form <=> Ctr.hCenter help]
     where
         form = Bdr.border $ padTop (Pad 1) $ hLimit 50 $ renderForm f
         help = padTop (Pad 1) $ Bdr.borderWithLabel (str "Help") body
-        body = str "- Please enter file names with extension\n"
+        body = str "- Please enter file names without extension\n"
 
 -- | Make Login Form
 mkForm :: LoginForm -> Form LoginForm e ResourceName
@@ -424,3 +511,10 @@ getFileList = do
   onlyFiles <- filterM Dir.doesFileExist _file
   Dir.setCurrentDirectory ".."
   return onlyFiles
+
+mDo :: (TuiState,T.Text, Socket) -> (TextFieldCursor -> Maybe TextFieldCursor) -> EventM n (Next TEditor)
+mDo (s, name, sock) func = do
+                let tfc = stateCursor s
+                let tfc' = fromMaybe tfc $ func tfc
+                let s' = s {stateCursor = tfc'}
+                continue (ViewerPage (s', name, sock))

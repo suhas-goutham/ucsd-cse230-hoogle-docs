@@ -11,11 +11,11 @@ import System.Directory
 
 main :: IO ()
 main = do
-  addrinfos <- getAddrInfo Nothing (Just "127.0.0.1") (Just "4444")
+  addrinfos <- getAddrInfo Nothing (Just "127.0.0.1") (Just "4545")
   let serveraddr = head addrinfos
   sock <- socket (addrFamily serveraddr) Stream defaultProtocol
   bind sock (addrAddress serveraddr)
-  listen sock 2
+  listen sock 5
   chan <- newChan
   runTCPEchoServerForever sock chan 0
 
@@ -46,7 +46,8 @@ rrLoop sock chan msgNum = do
   let broadcast msg = writeChan chan (msgNum, msg)
   
   broadcast "--> new person entered chat"
-  
+  print "new person entered chat"
+
   commLine <- dupChan chan
 
   reader <- forkIO $ fix $ \loop -> do
